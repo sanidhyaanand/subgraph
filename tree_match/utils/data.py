@@ -41,14 +41,6 @@ def shuffle_graph(x, edge_index, perm):
         ends.extend([perm[edge_index[1][i]].item() for i in torch.where(edge_index[0] == node)[0]])
     return x[perm,:], sort_edge_index(torch.stack((row1, torch.tensor(ends)), dim=0))
 
-def shuffle_batch(x, edge_index, perm):
-    nums = torch.bincount(edge_index[0])
-    row1 = perm.repeat_interleave(nums)
-    ends = []
-    for node in range(edge_index[0][-1] + 1):
-        ends.extend([perm[edge_index[1][i]].item() for i in torch.where(edge_index[0] == node)[0]])
-    return x[perm,:], sort_edge_index(torch.stack((row1, torch.tensor(ends)), dim=0))
-
 class PairData(Data):
     def __init__(self, edge_index_s=None, x_s=None, 
                 edge_index_t=None, x_t=None, y=None):
@@ -64,9 +56,6 @@ class PairData(Data):
             return self.x_s.size(0)
         if key == 'edge_index_t':
             return self.x_t.size(0)
-        # Assuming same number of nodes for both
-        # if key == 'y':
-        #     return self.x_s.size(0)
         else:
             return super().__inc__(key, value, *args, **kwargs)
 
