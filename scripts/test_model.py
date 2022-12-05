@@ -33,16 +33,20 @@ y = torch.stack([y, y], dim=1)
 data2 = PairData(edge_index_s, x_s, edge_index_t, x_t, y)
 
 data_list = [data1,data2,data1,data2] # batch of graphs
-def_batch_size = 2
+def_batch_size = 3
 psi_1 = GNN(input_dim=feature_dim, filters=[32,16,8], num_layers=3)
 
-def test_batching():
+def test_batching(batch_size):
     print(
         '\nTESTING BATCHING PROCEDURE\n--------------------------------------------'
     )
-    loader = DataLoader(data_list, batch_size = def_batch_size, follow_batch = ['x_s', 'x_t'])
-    for _ in range(def_batch_size):
-        batch = next(iter(loader))
+    loader = DataLoader(data_list, batch_size = batch_size, follow_batch = ['x_s', 'x_t'])
+    batch_iter = iter(loader)
+    for _ in range(batch_size):
+        try:
+            batch = next(batch_iter)
+        except StopIteration:
+            break
         print("Currently processing batch:", batch)
         print("Number of nodes in batch graph:", batch.x_s_batch.shape)
 
@@ -69,8 +73,12 @@ def test_on_multiple_graphs(data_list):
     set_seed()
     loader = DataLoader(data_list, batch_size = def_batch_size, follow_batch = ['x_s', 'x_t'])
     model = MainModel(psi_1=psi_1)
+    batch_iter = iter(loader)
     for _ in range(def_batch_size):
-        batch = next(iter(loader))
+        try:
+            batch = next(batch_iter)
+        except StopIteration:
+            break
         print("\nCurrently processing batch:", batch)
         assert batch.y.shape == torch.Size([batch.x_s.shape[0],2])
         assert torch.equal(batch.x_s_batch, batch.x_t_batch)
@@ -84,6 +92,6 @@ def test_on_multiple_graphs(data_list):
         loss = model.loss(S, batch.y, batch.x_s_batch)
         print("Loss in this run per batch:", loss)
 
-test_batching()
+test_batching(def_batch_size)
 test_on_single_graphs(data1)
 test_on_multiple_graphs(data_list)
