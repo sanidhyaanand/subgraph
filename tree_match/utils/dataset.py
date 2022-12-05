@@ -1,12 +1,11 @@
 import os.path as osp
 import os
 import random
-import math
+from itertools import chain
 
-import re
 import numpy as np
 from torch_geometric.data import Dataset, Data
-from torch_geometric.transforms import BaseTransform, Compose
+from torch_geometric.transforms import BaseTransform, Compose, NormalizeFeatures
 import torch
 import pickle
 
@@ -30,23 +29,12 @@ class Face2Edge(BaseTransform):
 
         return data
 
-# def process_pascalvoc(dataset, seed):
-#     torch.manual_seed(seed)
-#     random.seed(seed)
-#     from torch_geometric.data import DataListLoader
-
-#     data_list = DataListLoader(dataset, 32, follow_batch=['x_s', 'x_t'])
-#     for batch in data_list:
-#         batch.x_s = batch.x
-#         batch.e_s = batch.edge_index
-#         target_perm = 
-
-def load_dataset(dpath: str, name: str, category = None, train: bool = True):
+def load_dataset(dpath: str, name: str, category = None, train: bool = None):
     if not osp.isdir(dpath):
         os.makedirs(dpath)
-    fname = osp.join(dpath, name + ".pkl")
-    if os.path.isfile(fname):
-        d = pickle.load(open(fname,"rb"))
+    # fname = osp.join(dpath, name + ".pkl")
+    # if os.path.isfile(fname):
+    #     d = pickle.load(open(fname,"rb"))
     else:
         if name == "pascal_voc":
             from torch_geometric.datasets import PascalVOCKeypoints
@@ -54,12 +42,31 @@ def load_dataset(dpath: str, name: str, category = None, train: bool = True):
 
             transform = Compose([Delaunay(), Face2Edge()])
             assert category is not None, "Need to specify category for PascalVOCKeypoints"
-            if train:
-                d = PascalVOCKeypoints(root=dpath, category=category, train=True, transform=transform)
-            else:
-                d = PascalVOCKeypoints(root=dpath, category=category, train=False, transform=transform)
-        with open(fname,"wb") as f:
-            pickle.dump(d,f)
+            assert train is not None and isinstance(train, bool), "train parameter needs to be True or False"
+            
+            d = PascalVOCKeypoints(root=dpath, category=category, train=train, transform=transform)
+        elif name == "citation_full":
+            from torch_geometric.datasets import CitationFull
+            assert category in ["Cora", "Cora_ML", "CiteSeer", "DBLP", "PubMed"], "Category should be one of ['Cora', 'Cora_ML' 'CiteSeer', 'DBLP', 'PubMed']"
+            
+            d = CitationFull(root=dpath, name=category)
+        elif name == "TUDataset":
+            from torch_geometric.datasets import TUDataset
+
+            d = TUDataset(root=dpath, name='ENZYMES')
+        elif name == "Planetoid":
+            from torch_geometric.datasets import Planetoid
+            assert category in ["Cora", "CiteSeer", "PubMed"], "Category should be one of ['Cora', 'CiteSeer', 'PubMed']"
+
+            d = Planetoid(root=dpath, name=category)
+        elif name == "GED":
+            from torch_geometric.datasets import GEDDataset
+            assert train is not None and isinstance(train, bool), "train parameter needs to be True or False"
+            assert category in ["AIDS700nef", "LINUX", "ALKANE", "IMDBMulti"]
+            print('yes')
+            d = GEDDataset(root=dpath, name=category, train=train)
+        # with open(fname,"wb") as f:
+        #     pickle.dump(d,f)
     return d
 
 class SyntheticDataset(Dataset):
@@ -124,14 +131,14 @@ class PairDataset(torch.utils.data.Dataset):
             one target example for every source example instead of holding the
             product of all source and target examples. (default: :obj:`False`)
     """
-    def __init__(self, dataset_s, dataset_t, sample=False):
+    def __init__(self, dataset_s, dataset_t, sample=False, is_ged=False):
         self.dataset_s = dataset_s
         self.dataset_t = dataset_t
         self.sample = sample
+        self.is_ged = is_ged
 
     def __len__(self):
-        return len(self.dataset_s) if self.sample \
-            else len(self.dataset_s) * len(self.dataset_t)
+        return len(self.dataset_s)
 
     def __getitem__(self, idx):
         if self.sample:
@@ -141,28 +148,83 @@ class PairDataset(torch.utils.data.Dataset):
             data_s = self.dataset_s[idx]
             data_t = self.dataset_t[idx]
         
-        if data_s.y is not None:
-            # if len(data_s.y) != len(data_t.y):
-            #     diff = abs(len(data_s.y) - len(data_t.y))
-            #     pad = -1 * torch.ones(diff, dtype=torch.long, device=data_s.y.device)
-            #     if len(data_s.y) > len(data_t.y):
-            #         data_t.y = torch.cat([data_t.y, pad], dim=0)
-            #     else:
-            #         data_s.y = torch.cat([data_s.y, pad], dim=0)
-            ys = []
-            for item in data_s.y:
-                if item not in data_t.y:
-                    ys.append(-1)
-                else:
-                    ys.append(torch.where(data_t.y == item)[0].item())
-            ys = torch.tensor(ys, device=data_s.y.device)
+        y = self.dataset_s.ged[data_s.i, data_t.i] if self.is_ged else data_t.y.t()
 
         return PairData(
             x_s=data_s.x,
             edge_index_s=data_s.edge_index,
             x_t=data_t.x,
             edge_index_t=data_t.edge_index,
-            y=torch.stack((data_s.y, ys), dim=1)
+            y=y
+        )
+
+    def __repr__(self):
+        return '{}({}, {}, sample={})'.format(self.__class__.__name__,
+                                              self.dataset_s, self.dataset_t,
+                                              self.sample)
+
+class ValidPairDataset(torch.utils.data.Dataset):
+    r"""Combines two datasets, a source dataset and a target dataset, by
+    building valid pairs between separate dataset examples.
+    A pair is valid if each node class in the source graph also exists in the
+    target graph.
+    Args:
+        dataset_s (torch.utils.data.Dataset): The source dataset.
+        dataset_t (torch.utils.data.Dataset): The target dataset.
+        sample (bool, optional): If set to :obj:`True`, will sample exactly
+            one target example for every source example instead of holding the
+            product of all source and target examples. (default: :obj:`False`)
+    """
+    def __init__(self, dataset_s, dataset_t, sample=False):
+        self.dataset_s = dataset_s
+        self.dataset_t = dataset_t
+        self.sample = sample
+        self.pairs, self.cumdeg = self.__compute_pairs__()
+
+    def __compute_pairs__(self):
+        num_classes = 0
+        for data in chain(self.dataset_s, self.dataset_t):
+            num_classes = max(num_classes, data.y.max().item() + 1)
+
+        y_s = torch.zeros((len(self.dataset_s), num_classes), dtype=torch.bool)
+        y_t = torch.zeros((len(self.dataset_t), num_classes), dtype=torch.bool)
+
+        for i, data in enumerate(self.dataset_s):
+            y_s[i, data.y] = 1
+        for i, data in enumerate(self.dataset_t):
+            y_t[i, data.y] = 1
+
+        y_s = y_s.view(len(self.dataset_s), 1, num_classes)
+        y_t = y_t.view(1, len(self.dataset_t), num_classes)
+
+        pairs = ((y_s * y_t).sum(dim=-1) == y_s.sum(dim=-1)).nonzero()
+        cumdeg = pairs[:, 0].bincount().cumsum(dim=0)
+
+        return pairs.tolist(), [0] + cumdeg.tolist()
+
+    def __len__(self):
+        return len(self.dataset_s) if self.sample else len(self.pairs)
+
+    def __getitem__(self, idx):
+        if self.sample:
+            data_s = self.dataset_s[idx]
+            i = random.randint(self.cumdeg[idx], self.cumdeg[idx + 1] - 1)
+            data_t = self.dataset_t[self.pairs[i][1]]
+        else:
+            data_s = self.dataset_s[self.pairs[idx][0]]
+            data_t = self.dataset_t[self.pairs[idx][1]]
+
+        y = data_s.y.new_full((data_t.y.max().item() + 1, ), -1)
+        y[data_t.y] = torch.arange(len(data_t.y))
+        y = y[data_s.y]
+        y = torch.stack((torch.arange(len(data_s.y)), y), dim=0) # Mapping from idx of Gs to idx of Gt
+
+        return PairData(
+            x_s=data_s.x,
+            edge_index_s=data_s.edge_index,
+            x_t=data_t.x,
+            edge_index_t=data_t.edge_index,
+            y=y.transpose(0,-1)         
         )
 
     def __repr__(self):
