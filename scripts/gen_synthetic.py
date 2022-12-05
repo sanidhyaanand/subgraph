@@ -28,12 +28,9 @@ def generate_graph(num_nodes, edge_prob):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    # parser.add_argument('--edgeprob', type = float, default = 0.15)
-    parser.add_argument('--MIN_EDGE_PROB', type = float, default = 0.10)
-    parser.add_argument('--MAX_EDGE_PROB', type = float, default = 0.20)
-    parser.add_argument('--MIN_GRAPH_SIZE', type = int, default = 50)
-    parser.add_argument('--MAX_GRAPH_SIZE', type = int, default = 100)
-    parser.add_argument('--seed', type = int, default = 42)
+    parser.add_argument('--EDGE_PROB', type = float, default = 0.20)
+    parser.add_argument('--GRAPH_SIZE', type = int, default = 50)
+    parser.add_argument('--seed', type = int, default = 0)
     parser.add_argument('--DIR_PATH', type = str)
     av = parser.parse_args()
 
@@ -48,12 +45,12 @@ if __name__ == "__main__":
     torch.manual_seed(av.seed)
     np.random.seed(av.seed)
 
-    graph_sizes = (av.MAX_GRAPH_SIZE - av.MIN_GRAPH_SIZE)*np.random.sample(size=(num_graphs,))+av.MIN_GRAPH_SIZE
-    edge_probs = (av.MAX_EDGE_PROB - av.MIN_EDGE_PROB)*np.random.sample(size=(num_graphs,))+av.MIN_EDGE_PROB
+    graph_size = av.GRAPH_SIZE
+    edge_prob = av.EDGE_PROB
 
     max_idx = 0
     for graph_idx in range(num_graphs):
-        gen_graph = generate_graph(graph_sizes[graph_idx], edge_probs[graph_idx])
+        gen_graph = generate_graph(graph_size, edge_prob)
         node_idxs = torch.unique(gen_graph[0]).type(torch.int)
         if len(node_idxs) != node_idxs[-1].item() + 1:
             change = {}
@@ -77,7 +74,7 @@ if __name__ == "__main__":
         max_node_idx = torch.max(gen_graph[0].type(torch.int))
         node_degrees = torch.bincount(gen_graph[0].type(torch.int))
         # node_matrix = torch.zeros([max_node_idx+1, torch.max(node_degrees)])
-        node_matrix = torch.zeros([max_node_idx+1, av.MAX_GRAPH_SIZE])
+        node_matrix = torch.zeros([max_node_idx+1, av.GRAPH_SIZE])
         for idx, degree in enumerate(node_degrees):
                 node_matrix[idx][degree-1] = 1
         save_data(osp.join(av.DIR_PATH, 'raw'), (node_matrix, gen_graph), 'graph', graph_idx)

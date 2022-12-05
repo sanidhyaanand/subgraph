@@ -34,16 +34,18 @@ for path in paths:
 for idx in range(av.num_graphs):
     source_graph = source_dataset.get(idx)
     dropper = EdgeDropper(source_graph.edge_index, av.drop_prob)
+    s_idxs = torch.arange(source_graph.x.shape[0])
     perm = torch.randperm(source_graph.x.shape[0])
-    ground_truth = torch.stack((torch.arange(source_graph.x.shape[0]), perm), dim=1)
-    assert ground_truth.shape == torch.Size((source_graph.x.shape[0],2))
     
     target_x, target_e = shuffle_graph(
         source_graph.x,
         dropper.get_target_graph().type(torch.long), 
         perm
         )
-    target_graph = (target_x, target_e.to(dtype=torch.long), ground_truth)
+    
+    mapping = torch.sort(torch.stack((s_idxs, perm), dim=0)).indices[1]
+    target_graph = (target_x, target_e.to(dtype=torch.long), torch.stack((s_idxs, mapping), dim=0))
+    
     save_data(paths[1], target_graph, 'graph', idx)
 
 target_dataset = SyntheticDataset(root = paths[0])
